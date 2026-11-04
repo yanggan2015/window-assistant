@@ -27,7 +27,8 @@
 
                 <!-- 标题栏 -->
                 <DockPanel Grid.Row="0" LastChildFill="False" Margin="2,0,2,8" Background="Transparent"
-                           MouseLeftButtonDown="OnHeaderDrag">
+                           MouseLeftButtonDown="OnTitleMouseDown" MouseMove="OnTitleMouseMove"
+                           MouseLeftButtonUp="OnTitleMouseUp">
                     <TextBlock Text="窗哨" Foreground="{StaticResource AccentBrush}"
                                FontWeight="Bold" FontSize="15" DockPanel.Dock="Left" VerticalAlignment="Center"/>
                     <TextBlock x:Name="SessionLabel" Text="未选择窗口" Foreground="{StaticResource DimBrush}"
@@ -87,7 +88,7 @@
                 </ScrollViewer>
 
                 <!-- 底部提示 -->
-                <TextBlock Grid.Row="3" Text="悬停边缘展开 · 离开自动收缩 · Ctrl+Alt+W 呼出" Foreground="{StaticResource DimBrush}"
+                <TextBlock Grid.Row="3" Text="按住标题栏可拖动位置 · Ctrl+Alt+W 呼出/收起" Foreground="{StaticResource DimBrush}"
                            FontSize="10" Margin="2,8,2,0" HorizontalAlignment="Center"/>
             </Grid>
             </Grid>

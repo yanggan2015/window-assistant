@@ -29,7 +29,7 @@ public partial class SettingsWindow : Window
             {
                 Edge = cfg.Dock.Edge, AutoHide = cfg.Dock.AutoHide,
                 AttachToTarget = cfg.Dock.AttachToTarget, StripPx = cfg.Dock.StripPx,
-                FreeMove = cfg.Dock.FreeMove
+                FreeMove = cfg.Dock.FreeMove, FreeX = cfg.Dock.FreeX, FreeY = cfg.Dock.FreeY
             },
             Automation = new AutomationConfig { Enabled = cfg.Automation.Enabled, ConfirmEach = cfg.Automation.ConfirmEach },
             Ai = new AiConfig { MaxConcurrent = cfg.Ai.MaxConcurrent, AnalyzeDiffRegion = cfg.Ai.AnalyzeDiffRegion }

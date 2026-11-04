@@ -86,10 +86,18 @@ public partial class MainWindow : Window
         _pinned = true;   // 启动后工具条固定显示，直到用户手动收缩
         if (_cfg.Dock.FreeMove)
         {
-            // 自由模式：浮动到屏幕内一个可见位置，不贴边
-            var (sw, _) = ScreenSize();
-            Left = Math.Max(8, sw - _expandedW - 16);
-            Top = 80;
+            // 自由模式：恢复上次位置，否则浮动到屏幕内一个可见位置
+            if (_cfg.Dock.FreeX.HasValue && _cfg.Dock.FreeY.HasValue)
+            {
+                Left = _cfg.Dock.FreeX.Value;
+                Top = _cfg.Dock.FreeY.Value;
+            }
+            else
+            {
+                var (sw, _) = ScreenSize();
+                Left = Math.Max(8, sw - _expandedW - 16);
+                Top = 80;
+            }
         }
         else PlaceExpanded();
         _ = CheckOllamaAsync();
@@ -121,6 +129,9 @@ public partial class MainWindow : Window
     // ---------- 停靠 / 自动隐藏 ----------
     private void OnDockTick(object? sender, EventArgs e)
     {
+        // 正在拖动时不做任何停靠定位，避免抢位置
+        if (_dragging) return;
+
         // 自由移动模式：不贴边、不吸附、不自动隐藏，用户自行拖动位置
         if (_cfg.Dock.FreeMove)
         {
@@ -350,12 +361,54 @@ public partial class MainWindow : Window
         }
     }
 
-    /// <summary>标题栏拖动（仅自由移动模式生效）。</summary>
-    private void OnHeaderDrag(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    /// <summary>标题栏拖动：按下开始，移动改位置，松开完成。任意模式下都可用，拖动后自动进入自由位置。</summary>
+    private System.Windows.Point _dragStartScreen;
+    private double _dragWinLeft, _dragWinTop;
+    private double _dpiX = 1, _dpiY = 1;
+    private bool _dragging, _dragMoved;
+
+    private void OnTitleMouseDown(object sender, System.Windows.Input.MouseButtonEventArgs e)
     {
-        if (_cfg.Dock.FreeMove && e.LeftButton == System.Windows.Input.MouseButtonState.Pressed)
+        if (e.LeftButton != System.Windows.Input.MouseButtonState.Pressed) return;
+        _dragging = true; _dragMoved = false;
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        _dpiX = Math.Max(0.5, dpi.DpiScaleX);
+        _dpiY = Math.Max(0.5, dpi.DpiScaleY);
+        var c = GetCursorPoint();                       // 物理像素（GetCursorPos）
+        _dragStartScreen = new System.Windows.Point(c.X, c.Y);
+        _dragWinLeft = Left; _dragWinTop = Top;
+        ((System.Windows.UIElement)sender).CaptureMouse();
+    }
+
+    private void OnTitleMouseMove(object sender, System.Windows.Input.MouseEventArgs e)
+    {
+        if (!_dragging) return;
+        var c = GetCursorPoint();
+        // 物理像素差 → 换算为 DIP（WPF Left/Top 单位），保证 1:1 跟手
+        double dx = (c.X - _dragStartScreen.X) / _dpiX;
+        double dy = (c.Y - _dragStartScreen.Y) / _dpiY;
+        if (Math.Abs(dx) > 3 || Math.Abs(dy) > 3) _dragMoved = true;
+        Left = _dragWinLeft + dx;
+        Top = _dragWinTop + dy;
+    }
+
+    private void OnTitleMouseUp(object sender, System.Windows.Input.MouseButtonEventArgs e)
+    {
+        if (!_dragging) return;
+        _dragging = false;
+        var el = (System.Windows.UIElement)sender;
+        if (el.IsMouseCaptured) el.ReleaseMouseCapture();
+        if (_dragMoved && !_cfg.Dock.FreeMove)
         {
-            try { DragMove(); } catch { }
+            // 拖动了 → 自动进入自由位置，避免被贴边定时器拉回
+            _cfg.Dock.FreeMove = true;
+        }
+        if (_dragMoved)
+        {
+            // 记录自由位置，重启后恢复
+            _cfg.Dock.FreeX = (int)Left;
+            _cfg.Dock.FreeY = (int)Top;
+            SaveConfig();
         }
     }
 

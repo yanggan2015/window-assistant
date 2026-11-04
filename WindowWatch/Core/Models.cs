@@ -52,6 +52,8 @@ public sealed class DockConfig
     public bool AutoHide { get; set; } = false;   // 默认不自动隐藏，仅在设置中勾选后生效
     public bool AttachToTarget { get; set; } = false;
     public bool FreeMove { get; set; } = false;   // 自由移动：不贴边、不吸附，可拖到任意位置
+    public int? FreeX { get; set; }                // 自由模式下记忆的窗口位置（重启恢复）
+    public int? FreeY { get; set; }
     public int StripPx { get; set; } = 8;
     public int DockOffsetPx { get; set; } = 8;
 }
