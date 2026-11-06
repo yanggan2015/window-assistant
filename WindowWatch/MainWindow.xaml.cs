@@ -68,17 +68,51 @@ public partial class MainWindow : Window
     private void OnLoaded(object sender, RoutedEventArgs e)
     {
         _cfg = AppConfig.Load();
+        try
+        {
+            System.IO.File.AppendAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log"),
+                $"{DateTime.Now:HH:mm:ss} cfg={AppConfig.ConfigPath} exists={System.IO.File.Exists(AppConfig.ConfigPath)} sessions={_cfg.Sessions.Count} model={_cfg.Ollama.Model}\r\n");
+        }
+        catch { }
         _expandedW = 330; _expandedH = 520;
+        try
+        {
+            var dpiInfo = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+            NativeMethods.GetWindowRect(new System.Windows.Interop.WindowInteropHelper(this).Handle, out var selfRc);
+            System.IO.File.AppendAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log"),
+                $"{DateTime.Now:HH:mm:ss} dpi={dpiInfo.DpiScaleX:F2} selfRect={selfRc.Left},{selfRc.Top},{selfRc.Right - selfRc.Left}x{selfRc.Bottom - selfRc.Top} virtual={NativeMethods.GetSystemMetrics(78)}x{NativeMethods.GetSystemMetrics(79)} actual={ActualWidth:F0}x{ActualHeight:F0}\r\n");
+        }
+        catch { }
         _engine = new MonitorEngine(_cfg);
         _engine.Log += OnLog;
         _engine.AnalysisCompleted += OnAnalysis;
 
         // 重启后按保存的窗口信息重挂接监控会话
+        int saved = _cfg.Sessions.Count, restored = 0;
         foreach (var sc in _cfg.Sessions)
         {
             var w = WindowPicker.FindWindowBy(sc.Window);
             if (w != null)
-                _engine.AddSession(WindowPicker.ToTarget(w), sc.Profile, sc.PromptOverride);
+            {
+                var sess = _engine.AddSession(WindowPicker.ToTarget(w), sc.Profile, sc.PromptOverride);
+                restored++;
+                OnLog(sess, $"已恢复监控：{w.Title}");
+            }
+            else
+            {
+                LogLine($"未能恢复（窗口已关闭）：{sc.Window.Title}");
+            }
+        }
+        if (saved > 0)
+        {
+            // 诊断：记录枚举到的候选窗口，便于排查"配置了却不生效"
+            try
+            {
+                var cands = WindowPicker.Enumerate();
+                System.IO.File.AppendAllText(System.IO.Path.Combine(AppContext.BaseDirectory, "startup.log"),
+                    $"{DateTime.Now:yyyy-MM-dd HH:mm:ss} saved={saved} restored={restored} candidates={cands.Count}\r\n");
+            }
+            catch { }
         }
 
         _engine.Start();
@@ -110,7 +144,7 @@ public partial class MainWindow : Window
         {
             var client = new OllamaClient(_cfg.Ollama);
             var models = await client.ListModelsAsync();
-            var has = models.Exists(m => m.Equals(_cfg.Ollama.Model, StringComparison.OrdinalIgnoreCase));
+            var has = models.Exists(m => OllamaClient.ModelMatches(m, _cfg.Ollama.Model));
             SetStatus(has
                 ? $"Ollama 已连接 · 模型 {_cfg.Ollama.Model} 就绪"
                 : $"Ollama 已连接，但未找到模型 {_cfg.Ollama.Model}，请在设置中修改或执行 ollama pull");
@@ -133,7 +167,8 @@ public partial class MainWindow : Window
         if (_dragging) return;
 
         // 自由移动模式：不贴边、不吸附、不自动隐藏，用户自行拖动位置
-        if (_cfg.Dock.FreeMove)
+        // 注意：吸附（AttachToTarget）优先级更高，勾了吸附就不再走自由移动
+        if (_cfg.Dock.FreeMove && !_cfg.Dock.AttachToTarget)
         {
             if (!_expanded) { _pinned = true; Expand(); }
             return;
@@ -159,8 +194,8 @@ public partial class MainWindow : Window
             }
         }
 
-        if (_expanded && _cfg.Dock.AttachToTarget)
-            FollowTarget();
+        if (_cfg.Dock.AttachToTarget)
+            FollowTarget();   // 吸附：展开/收缩都贴着目标窗口跟随
         else if (_expanded)
             PlaceExpanded();
         else
@@ -222,20 +257,69 @@ public partial class MainWindow : Window
         }
     }
 
+    /// <summary>吸附被监控窗口：每 tick 取目标的实时矩形（物理像素），换算成 DIP 后贴边跟随。</summary>
     private void FollowTarget()
     {
         var s = _engine?.Sessions.Count > 0 ? _engine!.Sessions[0] : null;
-        if (s == null || !s.Target.IsValid) { PlaceExpanded(); return; }
-        var t = s.Target;
+        if (s == null || !s.Target.IsValid)
+        {
+            if (_expanded) PlaceExpanded(); else PlaceStrip();
+            return;
+        }
+
+        var hwnd = s.Target.Hwnd;
+        // 目标最小化 / 取不到矩形 → 回退到屏幕贴边，避免窗口飞到屏幕外
+        if (NativeMethods.IsIconic(hwnd) ||
+            !NativeMethods.GetWindowRect(hwnd, out var rc) ||
+            rc.Right <= rc.Left || rc.Bottom <= rc.Top)
+        {
+            if (_expanded) PlaceExpanded(); else PlaceStrip();
+            return;
+        }
+
+        // 物理像素 → WPF DIP（本机 150% 缩放，必须换算，否则位置偏 1.5 倍）
+        var dpi = System.Windows.Media.VisualTreeHelper.GetDpi(this);
+        double dpiX = Math.Max(0.5, dpi.DpiScaleX);
+        double dpiY = Math.Max(0.5, dpi.DpiScaleY);
+        double tLeft = rc.Left / dpiX, tTop = rc.Top / dpiY;
+        double tW = (rc.Right - rc.Left) / dpiX, tH = (rc.Bottom - rc.Top) / dpiY;
+
         var (sw, sh) = ScreenSize();
-        int off = Math.Max(2, _cfg.Dock.DockOffsetPx);
+        double off = Math.Max(2, _cfg.Dock.DockOffsetPx);
+        bool vertical = _cfg.Dock.Edge is "Left" or "Right";
+
+        double w, h;
+        if (_expanded) { w = _expandedW; h = _expandedH; }
+        else if (vertical) { w = Math.Max(4, _cfg.Dock.StripPx); h = Clamp(tH * 0.6, 120, sh); }
+        else { h = Math.Max(4, _cfg.Dock.StripPx); w = Clamp(tW * 0.6, 120, sw); }
+
+        double left, top;
         switch (_cfg.Dock.Edge)
         {
-            case "Left": Left = Math.Max(0, t.X - _expandedW - off); Top = Clamp(t.Y + (t.Height - _expandedH) / 2, 0, sh - _expandedH); break;
-            case "Top": Left = Clamp(t.X + (t.Width - _expandedW) / 2, 0, sw - _expandedW); Top = Math.Max(0, t.Y - _expandedH - off); break;
-            case "Bottom": Left = Clamp(t.X + (t.Width - _expandedW) / 2, 0, sw - _expandedW); Top = Math.Min(sh - _expandedH, t.Y + t.Height + off); break;
-            default: Left = Math.Min(sw - _expandedW, t.X + t.Width + off); Top = Clamp(t.Y + (t.Height - _expandedH) / 2, 0, sh - _expandedH); break;
+            case "Left": left = tLeft - w - off; top = tTop + (tH - h) / 2; break;
+            case "Top": left = tLeft + (tW - w) / 2; top = tTop - h - off; break;
+            case "Bottom": left = tLeft + (tW - w) / 2; top = tTop + tH + off; break;
+            default: left = tLeft + tW + off; top = tTop + (tH - h) / 2; break;
         }
+
+        // 贴在目标外侧但超出屏幕时，翻到另一侧
+        if (_cfg.Dock.Edge is "Left" or "Right")
+        {
+            if (left < 0) left = tLeft + tW + off;
+            if (left + w > sw) left = tLeft - w - off;
+            left = Clamp(left, 0, Math.Max(0, sw - w));
+            top = Clamp(top, 0, Math.Max(0, sh - h));
+        }
+        else
+        {
+            if (top < 0) top = tTop + tH + off;
+            if (top + h > sh) top = tTop - h - off;
+            top = Clamp(top, 0, Math.Max(0, sh - h));
+            left = Clamp(left, 0, Math.Max(0, sw - w));
+        }
+
+        Left = left; Top = top;
+        Width = w; Height = h;
     }
 
     private static double Clamp(double v, double lo, double hi) => Math.Min(hi, Math.Max(lo, v));
@@ -252,9 +336,14 @@ public partial class MainWindow : Window
     // ---------- 引擎事件 -> UI ----------
     private void OnLog(MonitorSession s, string msg)
     {
+        Dispatcher.Invoke(() => SessionLabel.Text = s.DisplayName);
+        LogLine(msg);
+    }
+
+    private void LogLine(string msg)
+    {
         Dispatcher.Invoke(() =>
         {
-            SessionLabel.Text = s.DisplayName;
             LogList.Items.Insert(0, $"[{DateTime.Now:HH:mm:ss}] {msg}");
             while (LogList.Items.Count > 60) LogList.Items.RemoveAt(LogList.Items.Count - 1);
         });
@@ -402,6 +491,7 @@ public partial class MainWindow : Window
         {
             // 拖动了 → 自动进入自由位置，避免被贴边定时器拉回
             _cfg.Dock.FreeMove = true;
+            _cfg.Dock.AttachToTarget = false;   // 手动拖动=自由摆放，取消吸附
         }
         if (_dragMoved)
         {

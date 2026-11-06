@@ -62,7 +62,7 @@ public partial class SettingsWindow : Window
             var model = ModelBox.Text.Trim();
             var client = new OllamaClient(new OllamaConfig { Host = host, Model = model, TimeoutSec = 8 });
             var models = await client.ListModelsAsync();
-            var hit = models.Find(m => m.Equals(model, StringComparison.OrdinalIgnoreCase));
+            var hit = models.Find(m => OllamaClient.ModelMatches(m, model));
             MessageBox.Show(this,
                 hit != null
                     ? $"连接成功。模型 {hit} 已就绪。"
@@ -84,7 +84,7 @@ public partial class SettingsWindow : Window
         if (!int.TryParse(StableBox.Text, out var stable) || stable < 1) { StableBox.Text = "2"; stable = 2; }
 
         _edit.Ollama.Host = string.IsNullOrWhiteSpace(HostBox.Text) ? "http://localhost:11434" : HostBox.Text.Trim();
-        _edit.Ollama.Model = string.IsNullOrWhiteSpace(ModelBox.Text) ? "qwen2.5vl:7b" : ModelBox.Text.Trim();
+        _edit.Ollama.Model = string.IsNullOrWhiteSpace(ModelBox.Text) ? "minicpm-v" : ModelBox.Text.Trim();
         _edit.Capture.PollIntervalMs = poll;
         _edit.Capture.DHashThreshold = dh;
         _edit.Capture.CooldownSec = cool;
@@ -94,7 +94,7 @@ public partial class SettingsWindow : Window
         _edit.Dock.AutoHide = AutoHideBox.IsChecked == true;
         _edit.Dock.AttachToTarget = AttachBox.IsChecked == true;
         _edit.Dock.FreeMove = FreeMoveBox.IsChecked == true;
-        if (_edit.Dock.FreeMove) _edit.Dock.AttachToTarget = false; // 自由移动时不吸附
+        if (_edit.Dock.AttachToTarget) _edit.Dock.FreeMove = false; // 吸附优先于自由移动，二者互斥
 
         _edit.Automation.Enabled = AutoExecBox.IsChecked == true;
         _edit.Automation.ConfirmEach = ConfirmBox.IsChecked == true;

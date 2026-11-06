@@ -22,6 +22,19 @@ public sealed class OllamaClient
         _http = new HttpClient { Timeout = TimeSpan.FromSeconds(Math.Max(5, cfg.TimeoutSec)) };
     }
 
+    /// <summary>名称匹配：容忍省略 ":latest" 标签（如 minicpm-v 视为 minicpm-v:latest）。</summary>
+    public static bool ModelMatches(string listed, string wanted)
+    {
+        var a = (listed ?? "").Trim();
+        var b = (wanted ?? "").Trim();
+        if (a.Equals(b, StringComparison.OrdinalIgnoreCase)) return true;
+        if (a.StartsWith(b + ":", StringComparison.OrdinalIgnoreCase)) return true;
+        if (b.StartsWith(a + ":", StringComparison.OrdinalIgnoreCase)) return true;
+        var an = a.Contains(':') ? a : a + ":latest";
+        var bn = b.Contains(':') ? b : b + ":latest";
+        return an.Equals(bn, StringComparison.OrdinalIgnoreCase);
+    }
+
     /// <summary>健康检查：返回模型列表（空 = 未安装/未启动）。</summary>
     public async Task<List<string>> ListModelsAsync(CancellationToken ct = default)
     {

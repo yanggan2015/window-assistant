@@ -9,6 +9,8 @@ namespace WindowWatch.Core;
 /// <summary>窗口目标描述（句柄易失效，故持久化时用进程/标题/类名定位）。</summary>
 public sealed class WindowTarget
 {
+    // 句柄是运行时值，不能进 JSON（System.Text.Json 不支持 IntPtr，会导致整份配置解析失败）
+    [JsonIgnore]
     public IntPtr Hwnd { get; set; }
     public string Title { get; set; } = "";
     public string ClassName { get; set; } = "";
@@ -26,15 +28,15 @@ public sealed class WindowTarget
 public sealed class OllamaConfig
 {
     public string Host { get; set; } = "http://localhost:11434";
-    public string Model { get; set; } = "qwen2.5vl:7b";
-    public int TimeoutSec { get; set; } = 60;
+    public string Model { get; set; } = "minicpm-v";
+    public int TimeoutSec { get; set; } = 300;
 }
 
 public sealed class CaptureConfig
 {
     public int PollIntervalMs { get; set; } = 800;
     public int DHashThreshold { get; set; } = 8;
-    public double PixelDiffThreshold { get; set; } = 0.02;
+    public double PixelDiffThreshold { get; set; } = 0.002;
     public int StableFrames { get; set; } = 2;
     public int CooldownSec { get; set; } = 10;
     public int MaxEdgePx { get; set; } = 1280;
@@ -107,7 +109,16 @@ public sealed class AppConfig
                 return JsonSerializer.Deserialize<AppConfig>(json, JsonOpts) ?? new AppConfig();
             }
         }
-        catch { /* 损坏配置回退默认 */ }
+        catch (Exception ex)
+        {
+            // 配置损坏时记录原因，避免静默回退默认值导致"配置了却不生效"
+            try
+            {
+                File.AppendAllText(Path.Combine(AppContext.BaseDirectory, "startup.log"),
+                    $"{DateTime.Now:HH:mm:ss} load error: {ex.GetType().Name}: {ex.Message}\r\n");
+            }
+            catch { }
+        }
         return new AppConfig();
     }
 

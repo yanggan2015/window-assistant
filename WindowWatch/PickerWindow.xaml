@@ -19,7 +19,8 @@
 
         <ListBox x:Name="WindowList" Grid.Row="2" DisplayMemberPath="Display"
                  Background="#FF2A2E37" Foreground="White" BorderBrush="#556070"
-                 SelectionMode="Single" MouseDoubleClick="OnListDoubleClick"/>
+                 SelectionMode="Single" MouseDoubleClick="OnListDoubleClick"
+                 SelectionChanged="OnWindowSelectionChanged"/>
 
         <StackPanel Grid.Row="3" Margin="0,10,0,0">
             <DockPanel Margin="0,0,0,4">

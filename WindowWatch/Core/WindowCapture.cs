@@ -51,12 +51,36 @@ public static class WindowCapture
                 }
             }
 
+            // 关键：GDI 抓图的 alpha 恒为 0，GDI+ 缩放/采样会按预乘 alpha 得到全黑，
+            // 导致 dHash 与像素差异恒为 0（内容明明在变却检测不到）。统一置为不透明。
+            Opaque(bmp);
+
             // 缩放工作图
             if (Math.Max(w, h) > maxEdgePx)
                 return Scale(bmp, maxEdgePx);
             return new Bitmap(bmp);
         }
         catch { bmp.Dispose(); return null; }
+    }
+
+    /// <summary>把 alpha 通道全部置为 255（GDI 抓图 alpha 恒 0，会让缩放采样变成全黑）。</summary>
+    private static void Opaque(Bitmap bmp)
+    {
+        var data = bmp.LockBits(new Rectangle(0, 0, bmp.Width, bmp.Height),
+            ImageLockMode.ReadWrite, PixelFormat.Format32bppArgb);
+        try
+        {
+            int stride = data.Stride;
+            var buf = new byte[stride * bmp.Height];
+            Marshal.Copy(data.Scan0, buf, 0, buf.Length);
+            for (int y = 0; y < bmp.Height; y++)
+            {
+                int off = y * stride;
+                for (int x = 0; x < bmp.Width; x++) buf[off + x * 4 + 3] = 255;
+            }
+            Marshal.Copy(buf, 0, data.Scan0, buf.Length);
+        }
+        finally { bmp.UnlockBits(data); }
     }
 
     private static Bitmap? CaptureScreenRegion(int x, int y, int w, int h)
@@ -81,16 +105,19 @@ public static class WindowCapture
 
     private static Rectangle ScreenBounds()
     {
-        int x = (int)System.Windows.SystemParameters.VirtualScreenLeft;
-        int y = (int)System.Windows.SystemParameters.VirtualScreenTop;
-        int w = (int)System.Windows.SystemParameters.VirtualScreenWidth;
-        int h = (int)System.Windows.SystemParameters.VirtualScreenHeight;
+        // 统一用物理像素：GetWindowRect 返回的是物理坐标，SystemParameters 返回的是 DIP，
+        // 高 DPI 下两者混用会让回退截图偏到别的区域（曾导致变化检测恒为 0）
+        int x = NativeMethods.GetSystemMetrics(NativeMethods.SM_XVIRTUALSCREEN);
+        int y = NativeMethods.GetSystemMetrics(NativeMethods.SM_YVIRTUALSCREEN);
+        int w = NativeMethods.GetSystemMetrics(NativeMethods.SM_CXVIRTUALSCREEN);
+        int h = NativeMethods.GetSystemMetrics(NativeMethods.SM_CYVIRTUALSCREEN);
+        if (w <= 0 || h <= 0) return new Rectangle(0, 0, 1, 1);
         return new Rectangle(x, y, w, h);
     }
 
     private static bool IsBlank(Bitmap bmp)
     {
-        // 抽样若干点判断是否全黑/全透明
+        // 抽样若干点判断是否全黑；注意 GDI/PrintWindow/屏幕抓取的 alpha 恒为 0，不能拿 alpha 判定
         using var b = new Bitmap(bmp, 32, 32);
         int nonBlack = 0, samples = 0;
         for (int yy = 0; yy < 32; yy += 2)
@@ -98,7 +125,7 @@ public static class WindowCapture
             {
                 var c = b.GetPixel(xx, yy);
                 samples++;
-                if (c.A > 20 && (c.R > 12 || c.G > 12 || c.B > 12)) nonBlack++;
+                if (c.R > 12 || c.G > 12 || c.B > 12) nonBlack++;
             }
         return samples == 0 || nonBlack < samples / 20; // 少于5%有内容视为空白
     }
@@ -164,13 +191,32 @@ public static class WindowCapture
     /// <summary>下采样灰度后统计差异像素占比。</summary>
     public static double PixelDiffRatio(Bitmap a, Bitmap b)
     {
-        using var ta = new Bitmap(a, 96, 96);
-        using var tb = new Bitmap(b, 96, 96);
-        var ga = ToGray(ta); var gb = ToGray(tb);
-        int diff = 0, total = 96 * 96;
-        for (int y = 0; y < 96; y++)
-            for (int x = 0; x < 96; x++)
-                if (Math.Abs(ga[x, y] - gb[x, y]) > 18) diff++;
+        return DiffRatio(SampleGray(a, 320), SampleGray(b, 320));
+    }
+
+    /// <summary>
+    /// 等比降采样灰度图（用于小范围文字变化的像素差异判定）。
+    /// 不能用方形缩略图：48×48 会把整块文字糊成同一片灰，导致"内容在变但差异恒为 0"。
+    /// </summary>
+    public static byte[,] SampleGray(Bitmap bmp, int maxEdge)
+    {
+        int w = bmp.Width, h = bmp.Height;
+        double r = Math.Min(1.0, (double)maxEdge / Math.Max(1, Math.Max(w, h)));
+        int nw = Math.Max(1, (int)(w * r)), nh = Math.Max(1, (int)(h * r));
+        using var t = new Bitmap(bmp, nw, nh);
+        return ToGray(t);
+    }
+
+    /// <summary>两张同尺寸灰度图的差异像素占比。</summary>
+    public static double DiffRatio(byte[,] a, byte[,] b)
+    {
+        int w = a.GetLength(0), h = a.GetLength(1);
+        if (b.GetLength(0) != w || b.GetLength(1) != h) return 1.0;
+        int diff = 0, total = w * h;
+        if (total == 0) return 0;
+        for (int y = 0; y < h; y++)
+            for (int x = 0; x < w; x++)
+                if (Math.Abs(a[x, y] - b[x, y]) > 10) diff++;
         return (double)diff / total;
     }
 }

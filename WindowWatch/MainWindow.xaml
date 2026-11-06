@@ -65,7 +65,8 @@
                         <ItemsControl x:Name="ActionList">
                             <ItemsControl.ItemTemplate>
                                 <DataTemplate>
-                                    <Button Margin="0,0,0,4" Padding="6,3" HorizontalContentAlignment="Left"
+                                    <Button Margin="0,0,0,4" Padding="6,3" HorizontalAlignment="Stretch"
+                                            HorizontalContentAlignment="Stretch"
                                             Style="{StaticResource SmallBtn}"
                                             Click="OnActionClick" Tag="{Binding}">
                                         <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="12"/>
